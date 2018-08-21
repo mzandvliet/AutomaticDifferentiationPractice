@@ -3,36 +3,18 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /* 
-    Let's make some nodes. 
-
-    they're all some f(a, b) thing with a forward
-    calculation path, and given a gradient can
-    route it back through, with respect to any
-    of the inputs.
-
-    We build a graph of these nodes, then execute
-    operations on them.
-
-    Todo:
-    - Implement the local gradient backprop in the modules themselves
-
-    We need an inlet/outlet system
-    Note: don't calculate all possible derivatives, just the ones you need.
-
-    - Build a graph traversal algorithm that does forward/backward passes automatically
     - Build a state visualizer
     - Implement vector algebra
     - Implement other operations needed by neural nets
     - Implement using Burst
-
-    
 
     Notes:
 
     - Formulating the correct job order by graph traversal and dependency checking
     for both forward and backward passes only has to be done once.
 
-    - We need to store gradient values for all the parameters
+    - Don't have to calculate all possible derivatives, just the ones you need.
+
     - Convergence of backprop for any computational graph + config == a mandelbrot set
 */
 
@@ -42,13 +24,16 @@ namespace BackPropPractice {
         private void Awake() {
             var a = new ConstNode(5f, true);
             var b = new ConstNode(3f, true);
-            var c = new ConstNode(-2f, true);
-            
+            var c = new ConstNode(2f, true);
+
             var add = new AddNode(a, b);
             var mul = new MultiplyNode(c, add);
 
+            var d = new ConstNode(10f, true);
+            var add2 = new AddNode(d, mul);
+
             var target = new ConstNode(15f, false);
-            var loss = new LossNode(mul, target);
+            var loss = new LossNode(add2, target);
 
             Optimize(loss);
         }
@@ -56,10 +41,26 @@ namespace BackPropPractice {
         private static void Optimize(IFloatNode node) {
             const float rate = 0.01f;
 
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 100; i++) {
                 ForwardPass(node);
                 BackwardPass(node);
                 ParameterUpdate(node, rate);
+            }
+        }
+
+        // Traverse graph from a given node up through its inputs, in breadth-first order
+        private static void TraverseInputsBF(IFloatNode node, System.Action<IFloatNode> visit) {
+            var stack = new Stack<IFloatNode>();
+            stack.Push(node);
+
+            while (stack.Count > 0) {
+                node = stack.Pop();
+
+                visit(node);
+
+                for (int i = 0; i < node.Inputs.Count; i++) {
+                    stack.Push(node.Inputs[i]);
+                }
             }
         }
 
@@ -68,67 +69,39 @@ namespace BackPropPractice {
 
             Debug.Log("Forward pas: " + node);
 
-            var stack = new Stack<IFloatNode>();
-            stack.Push(node);
+            var evalOrder = new List<IFloatNode>();
+            TraverseInputsBF(node, n => evalOrder.Add(n));
+            evalOrder.Reverse();
 
-            var list = new List<IFloatNode>();
-            
-            while (stack.Count > 0) {
-                node = stack.Pop();
-
-                list.Add(node);
-
-                for (int i = 0; i < node.Inputs.Count; i++) {
-                    stack.Push(node.Inputs[i]);
-                }
-            }
-
-            list.Reverse();
-
-            for (int i = 0; i < list.Count; i++) {
-                list[i].Forward();
-                Debug.Log(i + ": " + list[i].ToString());
+            for (int i = 0; i < evalOrder.Count; i++) {
+                evalOrder[i].Forward();
+                Debug.Log(i + ": " + evalOrder[i].ToString());
             }
         }
 
         private static void BackwardPass(IFloatNode node) {
             Debug.Log("Backwards pass: " + node);
 
+            TraverseInputsBF(node, n => {
+                float gradient = n.Output.IsConnected ? n.Output.Node.Gradients[n.Output.Inlet] : 1f;
+                n.Backward(gradient);
+            });
+
             var stack = new Stack<IFloatNode>();
             stack.Push(node);
-
-            while (stack.Count > 0) {
-                node = stack.Pop();
-
-                float gradient = node.Output.IsConnected ? node.Output.Node.Gradients[node.Output.Inlet] : 1f;
-                node.Backward(gradient);
-
-                for (int i = 0; i < node.Inputs.Count; i++) {
-                    stack.Push(node.Inputs[i]);
-                }
-            }
         }
 
         private static void ParameterUpdate(IFloatNode node, float rate) {
             Debug.Log("Parameter Update");
 
-            var stack = new Stack<IFloatNode>();
-            stack.Push(node);
-
-            while (stack.Count > 0) {
-                node = stack.Pop();
-
-                if (node is ConstNode) {
-                    var cNode = node as ConstNode;
+            TraverseInputsBF(node, n => {
+                if (n is ConstNode) {
+                    var cNode = n as ConstNode;
                     if (cNode.IsLearnable) {
-                        cNode.Value += node.Output.Node.Gradients[node.Output.Inlet] * rate;
+                        cNode.Value += n.Output.Node.Gradients[node.Output.Inlet] * rate;
                     }
                 }
-
-                for (int i = 0; i < node.Inputs.Count; i++) {
-                    stack.Push(node.Inputs[i]);
-                }
-            }
+            });
         }
     }
 
