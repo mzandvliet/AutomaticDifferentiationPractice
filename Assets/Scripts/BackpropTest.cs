@@ -37,10 +37,10 @@ namespace BackPropPractice {
         private void Awake() {
             var a = new ConstNode(5f);
             var b = new ConstNode(3f);
-            var c = new ConstNode(-6f);
+            var c = new ConstNode(-2f);
 
-            var node = new AddNode(a, b);
-            node = new AddNode(c, node);
+            IFloatNode node = new AddNode(a, b);
+            node = new MultiplyNode(c, node);
 
             Optimize(node);
         }
@@ -83,6 +83,8 @@ namespace BackPropPractice {
                     stack.Push(node.Inputs[i]);
                 }
             }
+
+            list.Reverse();
 
             for (int i = 0; i < list.Count; i++) {
                 list[i].Forward();
@@ -190,13 +192,8 @@ namespace BackPropPractice {
             ForwardValue = forwardValue;
         }
 
-        public override void Forward() {
-            
-        }
-
-        public override void Backward(float gradient) {
-
-        }
+        public override void Forward() { }
+        public override void Backward(float gradient) { }
 
         public override string ToString() {
             return "ID: " + Id + ", Const: " + ForwardValue;
