@@ -1,4 +1,6 @@
-﻿using UnityEngine;
+﻿using System;
+using System.Collections.Generic;
+using UnityEngine;
 
 /* 
     Let's make some nodes. 
@@ -14,8 +16,7 @@
     Todo:
     - Implement the local gradient backprop in the modules themselves
 
-    Instead of in this for loop we have now.
-    Important! While tempting to implement forward/backward passes through OO, don't.
+    We need an inlet/outlet system
     Note: don't calculate all possible derivatives, just the ones you need.
 
     - Build a graph traversal algorithm that does forward/backward passes automatically
@@ -25,6 +26,9 @@
     - Implement using Burst
 
     - Convergence of backprop for any computational graph + config == a mandelbrot set
+
+
+    We need to store gradient values for all the parameters
 */
 
 namespace BackPropPractice {
@@ -33,124 +37,240 @@ namespace BackPropPractice {
         private void Awake() {
             var a = new ConstNode(5f);
             var b = new ConstNode(3f);
-            var add1 = new AddNode(a, b);
+            var c = new ConstNode(-6f);
 
-            var c = new ConstNode(-2f);
-            var add2 = new MultiplyNode(add1, c);
+            var node = new AddNode(a, b);
+            node = new AddNode(c, node);
 
-            const float rate = 0.03744485f;
+            Optimize(node);
+        }
 
-            for (int i = 0; i < 100; i++) {
-                float result = add2.Forward();
+        private static void Optimize(IFloatNode node) {
+            const float rate = 0.01f;
+
+            for (int i = 0; i < 1; i++) {
+                ForwardPass(node);
+                float result = node.ForwardValue;
                 float target = 15f;
 
-                float dLdAdd2 = target - result; // Note: get from SumSquareLoss node
-                
-                float dLdC = add2.BackwardB(dLdAdd2);
-                float dLdAdd1 = add2.BackwardA(dLdAdd2);
+                float dLdO = target - result; // Note: get from SumSquareLoss node
 
-                float dLdA = add1.BackwardA(dLdAdd1);
-                float dLdB = add1.BackwardB(dLdAdd1);
+                // Todo: visualize the graph
+                //Debug.Log(i + ": " + a.ForwardValue + " + " + b.ForwardValue + " = " + result);
 
-                Debug.Log(i + ": (" + a.Value + " + " + b.Value + ") + " + c.Value + " = " + result);
+                // a.ForwardValue += dLdA * rate;
+                // b.ForwardValue += dLdB * rate;
+                // c.ForwardValue += dLdC * rate;
+            }
+        }
 
-                a.Value += dLdA * rate;
-                b.Value += dLdB * rate;
-                c.Value += dLdC * rate;
+        private static void ForwardPass(IFloatNode node) {
+            // Create ordered lists of ops, burst-ready
+
+            Debug.Log("Forward pass");
+
+            var stack = new Stack<IFloatNode>();
+            var list = new List<IFloatNode>();
+
+            stack.Push(node);
+            
+            while (stack.Count > 0) {
+                node = stack.Pop();
+
+                list.Add(node);
+
+                for (int i = 0; i < node.Inputs.Count; i++) {
+                    stack.Push(node.Inputs[i]);
+                }
+            }
+
+            for (int i = 0; i < list.Count; i++) {
+                list[i].Forward();
+                Debug.Log(i + ": " + list[i].ToString());
+            }
+        }
+
+        private static void BackwardPass(IFloatNode node) {
+            var stack = new Stack<IFloatNode>();
+            stack.Push(node);
+
+            float gradient = 1f;
+
+            while (stack.Count > 0) {
+                var n = stack.Pop();
+
+                node.Backward(gradient);
+
+                for (int i = 0; i < node.Inputs.Count; i++) {
+                    stack.Push(node.Inputs[i]);
+                }
             }
         }
     }
 
     public interface IFloatNode {
-        float Value {
+        IList<IFloatNode> Inputs {
             get;
         }
 
-        float Forward();
+        Outlet Output {
+            get;
+        }
+
+        void Forward();
+        void Backward(float gradient);
+
+        float ForwardValue {
+            get;
+        }
+
+        float[] BackwardValues {
+            get;
+        }
+
+        int Id {
+            get;
+        }
     }
 
-    public class ConstNode : IFloatNode {
-        public float Value {
+    public class Outlet {
+        IFloatNode Node;
+        int Inlet;
+
+        public bool IsConnected {
+            get { return Node != null; }
+        }
+
+        public void Connect(IFloatNode node, int inlet) {
+            Node = node;
+            Inlet = inlet;
+        }
+    }
+
+    public abstract class AbstractNode : IFloatNode {
+        public IList<IFloatNode> Inputs {
+            get;
+            private set;
+        }
+
+        public Outlet Output {
+            get;
+        }
+
+        public float ForwardValue {
             get;
             set;
         }
 
-        public ConstNode(float value) {
-            Value = value;
+        public float[] BackwardValues {
+            get;
+            private set;
         }
 
-        public float Forward() {
-            return Value;
+        public int Id {
+            get;
+            private set;
+        }
+
+        private static int Count;
+
+        public AbstractNode(int inlets) {
+            BackwardValues = new float[inlets];
+            Inputs = new IFloatNode[inlets];
+            Output = new Outlet();
+            Id = Count++;
+        }
+
+        public abstract void Forward();
+        public abstract void Backward(float gradient);
+    }
+
+    public class ConstNode : AbstractNode {
+        public ConstNode(float forwardValue) : base(0) {
+            ForwardValue = forwardValue;
+        }
+
+        public override void Forward() {
+            
+        }
+
+        public override void Backward(float gradient) {
+
+        }
+
+        public override string ToString() {
+            return "ID: " + Id + ", Const: " + ForwardValue;
         }
     }
 
-    public class AddNode : IFloatNode {
-        public float Value {
-            get;
-            private set;
+    public class AddNode : AbstractNode {
+        public AddNode(IFloatNode a, IFloatNode b) : base(2) {
+            Inputs[0] = a;
+            Inputs[1] = b;
+
+            a.Output.Connect(this, 0);
+            b.Output.Connect(this, 1);
         }
 
-        public IFloatNode A {
-            get;
-            private set;
+        public override void Forward() {
+            ForwardValue = Inputs[0].ForwardValue + Inputs[1].ForwardValue;
         }
 
-        public IFloatNode B {
-            get;
-            private set;
+        public override void Backward(float gradient) {
+            BackwardValues[0] = gradient;
+            BackwardValues[1] = gradient;
         }
 
-        public AddNode(IFloatNode a, IFloatNode b) {
-            A = a;
-            B = b;
-        }
-
-        public float Forward() {
-            Value = A.Forward() + B.Forward();
-            return Value;
-        }
-
-        public float BackwardA(float grad) {
-            return grad * 1f;
-        }
-
-        public float BackwardB(float grad) {
-            return grad * 1f;
+        public override string ToString() {
+            return "ID: " + Id + ", + " + ForwardValue;
         }
     }
 
-    public class MultiplyNode : IFloatNode {
-        public float Value {
-            get;
-            private set;
+    public class MultiplyNode : AbstractNode {
+        public MultiplyNode(IFloatNode a, IFloatNode b) : base(2) {
+            Inputs[0] = a;
+            Inputs[1] = b;
+
+            a.Output.Connect(this, 0);
+            b.Output.Connect(this, 1);
         }
 
-        public IFloatNode A {
-            get;
-            private set;
+        public override void Forward() {
+            ForwardValue = Inputs[0].ForwardValue * Inputs[1].ForwardValue;
         }
 
-        public IFloatNode B {
-            get;
-            private set;
+        public override void Backward(float gradient) {
+            BackwardValues[0] = gradient * Inputs[1].ForwardValue;
+            BackwardValues[1] = gradient * Inputs[0].ForwardValue;
         }
 
-        public MultiplyNode(IFloatNode a, IFloatNode b) {
-            A = a;
-            B = b;
+        public override string ToString() {
+            return "ID: " + Id + ", * " + ForwardValue;
         }
+    }
 
-        public float Forward() {
-            Value = A.Forward() * B.Forward();
-            return Value;
-        }
+    // public class LossNode : AbstractNode {
+    //     public LossNode(IFloatNode result, IFloatNode target) : base(2) {
+    //         Inputs[0] = result;
+    //         Inputs[1] = target;
 
-        public float BackwardA(float grad) {
-            return grad * B.Value;
-        }
+    //         result.Output = this;
+    //         target.Output = this;
+    //     }
 
-        public float BackwardB(float grad) {
-            return grad * A.Value;
-        }
+    //     public void Forward() {
+    //         ForwardValue = Inputs[1].ForwardValue - Inputs[0].ForwardValue;
+    //     }
+
+    //     public void Backward(int param) {
+    //     }
+    // }
+
+    [AttributeUsage(
+    AttributeTargets.Class |
+    AttributeTargets.Field |
+    AttributeTargets.Property)]
+    public class OptimizeParameterAttribute : Attribute {
+
     }
 }
